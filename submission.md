@@ -12,7 +12,9 @@ __table_args__ = (
 ```
 I also asked Claude what does `__table_args__` mean, which it told me that this is SQLAlchemy's way of attaching table-level configuration to a model. This piece of code means that the combination of `user_id` and `song_id` must be unique across the whole table. Its previous statement sounded like an user can only rate a song once, which is misleading. This code actually means that there can only be one rating from one person for one song.
 
-**Instance #2:**
+**Instance #2: Creating notification tests**
+
+I asked Claude to generate the test (`test_notifications.py`) for the notification service, focusing on when the song gets a rating since that was the focus of Issue #4. I reviewed the file, ran the test, and confirmed that the test was correctly implemented.
 
 
 ## Codebase Map
@@ -140,17 +142,49 @@ The `songs[:-1]` slices off the last element, so the highest-position song is dr
 - Reran the playlist tests (`test_playlists.py`) and confirmed that all the tests passed, including `test_empty_playlist_returns_empty_list`. This matters because `[:-1]` on an empty list would have silently returned an empty list too, so removing the slice needed to be verified against the empty-playlist edge case. Since that test still passes, an empty playlist correctly returns `[]` and a populated playlist now returns all its songs in position order.
 
 
-## Bug Fix #3: "The same song keeps showing up twice in search" (Issue #3)
+## Bug Fix #3: "I got notified when a friend added my song to a playlist but not when they rated it" (Issue #4)
 
 **Reproduction Steps**
 
+- Unlike the previous two bug fixes, there was no existing test under the `tests/` folder covering notifications, so I added one (`test_notifications.py`) that mirrors the pattern of the other tests
+- The test seeds a sharer, a friend, and a song shared by the sharer, then has the friend rate that song via `rate_song` and checks the sharer's notifications with `get_notifications`
+- Ran the notification test with `pytest tests/test_notifications.py`. The `test_notifies_sharer_when_song_rated` test failed while `test_no_self_notification_when_rating_own_song` passed
+- `test_notifies_sharer_when_song_rated` expected the sharer to have 1 notification but got 0
+- The bug triggers when a friend rates someone else's song: the rating is saved, but the sharer never receives a notification, even though adding the same song to a playlist does notify them
+
 **Navigation Path**
+
+1. Looked at `services/notification_service.py` and compared the `rate_song` function with the `add_to_playlist` function, since the working case (playlist adds) and the broken case (ratings) live in the same file
+2. `add_to_playlist` ends by checking `if song.shared_by != added_by_user_id` and calling `create_notification` for the sharer
+3. `rate_song` saves the rating and commits, but then returns immediately with no call to `create_notification`
+4. This is likely the cause because the notification step that exists in `add_to_playlist` is simply missing from `rate_song`
 
 **Root Cause**
 
+`services/notification_service.py` (in `rate_song`)
+```
+db.session.commit()
+
+return rating
+```
+
+`rate_song` persists the rating but never creates a notification, so the sharer is never told. `add_to_playlist` in the same file does create a notification, which is why playlist adds worked but ratings didn't.
+
 **Fix Description** 
 
+- Added a notification step after the rating commits, matching the pattern already used in `add_to_playlist`: if the rater isn't the original sharer (`song.shared_by != user_id`), create a `song_rated` notification for the sharer
+```
+if song.shared_by != user_id:
+    create_notification(
+        user_id=song.shared_by,
+        notification_type="song_rated",
+        body=f"{rater.username} rated your song '{song.title}' {score}/5.",
+    )
+```
+
 **Side-Effect Check**
+
+- Reran the notification tests (`test_notifications.py`) and confirmed that all the tests passed. `test_no_self_notification_when_rating_own_song` matters here because the fix must not notify users about ratings on their own songs. Since that test still passes, the `song.shared_by != user_id` guard correctly suppresses self-notifications while a friend's rating now produces exactly one `song_rated` notification.
 
 
 ## Commit History
