@@ -69,6 +69,100 @@ User adds a song to a playlist: `POST /playlists/<id>/songs in routes/playlists.
 5. Your fix and side-effect check — What did you change and why does that change fix the root cause? What related functionality did you check afterward to confirm you didn't break anything?
 <-->
 
+**Reproduction Steps**
+
+- Before attempting to reproduce the bug, found existing tests under the `test/` folder
+- Ran the streak tests under with `pytest tests/test_streaks.py`. The `test_streak_increments_on_sunday` test failed, while the other tests (new user, consecutive weekday, same-day, and skipped-day) all passed
+- Looking into the streak test, the test simulates a user listen on consecutive days by calling `update_listening_streak` with `now` advancing one day at a time
+- The streak increments normally except in the failed scenario that `now` lands on a Sunday.
+- The bug triggers when the user is listening on a Sunday, the streak resets to 1 even though they have had listened on the previous day.
+
+```
+_______________________ test_streak_increments_on_sunday _______________________
+
+app = <Flask 'app'>, user = <User 21a2aa0a-02e6-4856-a5c7-33cef4f9bb24>
+
+    def test_streak_increments_on_sunday(app, user):
+        """
+        Listening on Saturday and then Sunday should increment the streak.
+        """
+        with app.app_context():
+            u = db.session.get(User, user.id)
+            saturday = datetime(2024, 6, 15, 12, 0, 0, tzinfo=timezone.utc)  # weekday() == 5
+            sunday = datetime(2024, 6, 16, 12, 0, 0, tzinfo=timezone.utc)    # weekday() == 6
+    
+            update_listening_streak(u, saturday)
+            assert u.listening_streak == 1
+    
+            update_listening_streak(u, sunday)
+>           assert u.listening_streak == 2  # Should increment, not reset
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E           assert 1 == 2
+E            +  where 1 = <User 21a2aa0a-02e6-4856-a5c7-33cef4f9bb24>.listening_streak
+
+tests/test_streaks.py:96: AssertionError
+```
+
+**Navigation Path**
+
+1. Looked at `services/streak_service.py` and read the `update_listening_streak` function
+2. Compared the code with the streak rules written in the docstring 
+3. The docstring didn't mention any rules about days of a week, but there exists a condition `today.weekday() != 6` that resets the streak
+4. This is likely the cause because this rule indicates that streaks are reset on Sundays
+
+**Root Cause**
+
+`services/streak_service.py` (line 73-74)
+```
+elif days_since_last == 1 and today.weekday() != 6:
+    user.listening_streak += 1
+```
+
+The `weekday() != 6` clause means that when today is Sunday, a user who listened yesterday failed the condition and fell into to the `else`, resetting the streak to 1 instead of incrementing. 
+
+The docstring says:
+  - If the user hasn't listened before: streak starts at 1.
+  - If the user already listened today: no change.
+  - If the user listened yesterday: streak increments by 1.
+  - If more than one day has passed: streak resets to 1.
+
+This `weekday() != 6` condition shouldn't be here since it is never mentioned in the docstring.
+
+
+**Fix Description** 
+
+- Removed the `and today.weekday() != 6` so the `elif` condition is simply `days_since_last == 1`, matching the streak rules in the docstring
+
+**Side-Effect Check**
+
+- Reran the streaks test (`test_streaks.py`) and confirmed that all the tests passed. These tests covered other edge cases for `update_listening_streak`, which is what the function fixed. Since the tests passed, other branches for the if-else statement still behave correctly and match the streak rules in the docstring.
+
+
+## Bug Fix #2: "The same song keeps showing up twice in search" (Issue #3)
+
+**Reproduction Steps**
+
+**Navigation Path**
+
+**Root Cause**
+
+**Fix Description** 
+
+**Side-Effect Check**
+
+
+## Bug Fix #3: "The last song in a playlist never shows up" (Issue #5)
+
+**Reproduction Steps**
+
+**Navigation Path**
+
+**Root Cause**
+
+**Fix Description** 
+
+**Side-Effect Check**
+
 
 ## Commit History
 <!-->
