@@ -188,7 +188,13 @@ if song.shared_by != user_id:
 
 
 ## Commit History
-<!-->
-Run git log --oneline on your bugfix/mixtape branch. Take a screenshot.
-<-->
+
+```
+6e17bda (HEAD -> bugfix/mixtape, origin/bugfix/mixtape) fix: add notification for song ratings to notify the sharer
+8b423d8 fix: return all songs in playlist instead of excluding the last one
+4a86a61 fix: correct listening streak reset on Sundays
+f4081e0 docs: add codebase map in submission.md
+2dfdeaa (upstream/main, upstream/HEAD, origin/main, origin/HEAD, main) Add .gitignore file and update README with setup instructions
+7b64551 initial commit
+```
 
