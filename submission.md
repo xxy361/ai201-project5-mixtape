@@ -3,6 +3,7 @@
 ## AI Usage
 
 **Instance #1: Rating in models.py**
+
 I asked Claude to explain the main files briefly and it gave me a short description for `models.py`, `app.py`, `routes` directory, and the `services` directory. However, it says: "Ratings are their own table with a `UniqueConstraint(user_id, song_id)`, so a user can rate a song only once." I found this statement very strange so I took a closer look at the code for double checking. In the `Rating` model, the piece of code that this statement is talking about is:
 ```
 __table_args__ = (
@@ -61,13 +62,6 @@ User adds a song to a playlist: `POST /playlists/<id>/songs in routes/playlists.
 
 
 ## Bug Fix #1: "My listening streak keeps resetting" (Issue #1)
-<!-->
-1. Issue number and title
-2. How you reproduced it — What steps did you take to confirm the bug exists before touching any code? What inputs, sequence of actions, or data condition triggered the behavior?
-3. How you found the root cause — Which files did you look at? What was your navigation path? What moment made you confident you'd found the right place — not just a suspicious area, but the specific cause?
-4. The root cause — In plain English, explain exactly what was wrong. Not "there was a bug in the streak logic" — explain the specific condition, comparison, or missing step that caused the problem.
-5. Your fix and side-effect check — What did you change and why does that change fix the root cause? What related functionality did you check afterward to confirm you didn't break anything?
-<-->
 
 **Reproduction Steps**
 
@@ -76,32 +70,6 @@ User adds a song to a playlist: `POST /playlists/<id>/songs in routes/playlists.
 - Looking into the streak test, the test simulates a user listen on consecutive days by calling `update_listening_streak` with `now` advancing one day at a time
 - The streak increments normally except in the failed scenario that `now` lands on a Sunday.
 - The bug triggers when the user is listening on a Sunday, the streak resets to 1 even though they have had listened on the previous day.
-
-```
-_______________________ test_streak_increments_on_sunday _______________________
-
-app = <Flask 'app'>, user = <User 21a2aa0a-02e6-4856-a5c7-33cef4f9bb24>
-
-    def test_streak_increments_on_sunday(app, user):
-        """
-        Listening on Saturday and then Sunday should increment the streak.
-        """
-        with app.app_context():
-            u = db.session.get(User, user.id)
-            saturday = datetime(2024, 6, 15, 12, 0, 0, tzinfo=timezone.utc)  # weekday() == 5
-            sunday = datetime(2024, 6, 16, 12, 0, 0, tzinfo=timezone.utc)    # weekday() == 6
-    
-            update_listening_streak(u, saturday)
-            assert u.listening_streak == 1
-    
-            update_listening_streak(u, sunday)
->           assert u.listening_streak == 2  # Should increment, not reset
-            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-E           assert 1 == 2
-E            +  where 1 = <User 21a2aa0a-02e6-4856-a5c7-33cef4f9bb24>.listening_streak
-
-tests/test_streaks.py:96: AssertionError
-```
 
 **Navigation Path**
 
@@ -128,7 +96,6 @@ The docstring says:
 
 This `weekday() != 6` condition shouldn't be here since it is never mentioned in the docstring.
 
-
 **Fix Description** 
 
 - Removed the `and today.weekday() != 6` so the `elif` condition is simply `days_since_last == 1`, matching the streak rules in the docstring
@@ -138,20 +105,42 @@ This `weekday() != 6` condition shouldn't be here since it is never mentioned in
 - Reran the streaks test (`test_streaks.py`) and confirmed that all the tests passed. These tests covered other edge cases for `update_listening_streak`, which is what the function fixed. Since the tests passed, other branches for the if-else statement still behave correctly and match the streak rules in the docstring.
 
 
-## Bug Fix #2: "The same song keeps showing up twice in search" (Issue #3)
+## Bug Fix #2: "The last song in a playlist never shows up" (Issue #5)
 
 **Reproduction Steps**
 
+- Before attempting to reproduce the bug, found existing tests under the `tests/` folder
+- Ran the playlist tests with `pytest tests/test_playlists.py`. The `test_playlist_returns_all_songs` and `test_playlist_returns_songs_in_order` tests failed, while the empty-playlist test passed
+- Looking into the tests, the `seed_playlist` fixture builds a playlist with 5 songs ("Track 1" through "Track 5") at positions 1–5, then calls `get_playlist_songs` to read them back
+- `test_playlist_returns_all_songs` expected 5 songs but got 4, and `test_playlist_returns_songs_in_order` showed the returned list was missing the final "Track 5"
+- The bug triggers when reading back a playlist: the last song (highest position) is consistently dropped, so `get_playlist_songs` returns one fewer song than was added
+
 **Navigation Path**
+
+1. Looked at `services/playlist_service.py`
+2. Read the `get_playlist_songs` function. Since only the last song doesn't show up, that means there is no problem creating a playlist, getting a playlist, or getting user's playlist.
+3. Read the docstring, which has a note that says "this function returns all songs in the playlist."
+4. This function is likely the cause because the last song in a playlist supposes to show up according to the note in the docstring
 
 **Root Cause**
 
+`services/playlist_service.py` (line 66)
+```
+return [song.to_dict() for song in songs[:-1]]
+```
+
+The `songs[:-1]` slices off the last element, so the highest-position song is dropped from the returned results. This makes sense that the tests return 4 tracks and lose the "Track 5".
+
 **Fix Description** 
+
+- Removed the `[:-1]` and kept the return statement as `return [song.to_dict() for song in songs]`, matching the docstring description that the function returns all songs in the playlist.
 
 **Side-Effect Check**
 
+- Reran the playlist tests (`test_playlists.py`) and confirmed that all the tests passed, including `test_empty_playlist_returns_empty_list`. This matters because `[:-1]` on an empty list would have silently returned an empty list too, so removing the slice needed to be verified against the empty-playlist edge case. Since that test still passes, an empty playlist correctly returns `[]` and a populated playlist now returns all its songs in position order.
 
-## Bug Fix #3: "The last song in a playlist never shows up" (Issue #5)
+
+## Bug Fix #3: "The same song keeps showing up twice in search" (Issue #3)
 
 **Reproduction Steps**
 
@@ -166,6 +155,6 @@ This `weekday() != 6` condition shouldn't be here since it is never mentioned in
 
 ## Commit History
 <!-->
-Run git log --oneline on your bugfix/mixtape branch. Take a screenshot. Confirm there is one commit per bug fix with a meaningful fix: message. If multiple fixes are bundled in one commit, it's worth separating them now before submitting.
+Run git log --oneline on your bugfix/mixtape branch. Take a screenshot.
 <-->
 
